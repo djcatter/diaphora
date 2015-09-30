@@ -38,6 +38,9 @@ import decimal
 import difflib
 import sqlite3
 import traceback
+import re
+import diff_match_patch as dmp_module
+import idaapi
 
 from hashlib import md5
 from cStringIO import StringIO
@@ -89,6 +92,7 @@ more than 100,000 functions.<br><br>
 You can disable it by un-checking the 'Do not export basic blocks<br>
 or instructions' option."""
 
+doGoogleDiff = 1
 #-----------------------------------------------------------------------
 def log(msg):
   Message("[%s] %s\n" % (time.asctime(), msg))
@@ -752,7 +756,9 @@ class CBinDiff:
                 comment1 text,
                 comment2 text,
                 name text,
-                type text) """
+                instr_cnt integer,
+                type text
+                ) """
     cur.execute(sql)
 
     sql = "create index if not exists idx_instructions_address on instructions (address)"
@@ -1048,7 +1054,7 @@ class CBinDiff:
     
     # Always remove the first underscores
     name = name.lstrip("_")
-
+    instr_cnt = 0 # This is used to correlate a diff to an instruction. Not sure I like this but giving it a shot
     f = int(f)
     func = get_func(f)
     if not func:
@@ -1103,6 +1109,12 @@ class CBinDiff:
       for x in list(Heads(block.startEA, block.endEA)):
         mnem = GetMnem(x)
         disasm = GetDisasm(x)
+        instr_cnt = instr_cnt + 1 # Add the instruction Count so we can come back to this later
+        # Trim the comments as that does not help the diff utility
+        idx = disasm.find(';')
+        if(idx != -1):
+          disasm = disasm[:idx]
+        
         size += ItemSize(x)
         instructions += 1
 
@@ -1115,7 +1127,8 @@ class CBinDiff:
           if nodes == 1:
             assembly[block_ea] = [disasm]
           else:
-            assembly[block_ea] = ["loc_%x:" % x, disasm]
+            assembly[block_ea] = [disasm]  
+          #  assembly[block_ea] = ["loc_%x:" % x, disasm] Need to come back to this when labels are included
 
         
         decoded_size = idaapi.decode_insn(x)
@@ -1162,7 +1175,7 @@ class CBinDiff:
 
         ins_cmt1 = GetCommentEx(x, 0)
         ins_cmt2 = GetCommentEx(x, 1)
-        instructions_data.append([x - image_base, mnem, disasm, ins_cmt1, ins_cmt2, tmp_name, tmp_type])
+        instructions_data.append([x - image_base, mnem, disasm, ins_cmt1, ins_cmt2, tmp_name,instr_cnt, tmp_type ])
 
         switch = get_switch_info_ex(x)
         if switch:
@@ -1358,16 +1371,16 @@ class CBinDiff:
     if not self.function_summaries_only:
       bb_data, bb_relations = props[len(props)-2:]
       instructions_ids = {}
-      sql = """insert into main.instructions (address, mnemonic, disasm, comment1, comment2, name, type)
-                                 values (?, ?, ?, ?, ?, ?, ?)"""
+      sql = """insert into main.instructions (address, mnemonic, disasm, comment1, comment2, name, instr_cnt, type)
+                                 values (?, ?, ?, ?, ?, ?, ?, ?)"""
       self_get_instruction_id = self.get_instruction_id
       cur_execute = cur.execute
       for key in bb_data:
         for insn in bb_data[key]:
-          addr, mnem, disasm, cmt1, cmt2, name, mtype = insn
+          addr, mnem, disasm, cmt1, cmt2, name, instr_cnt, mtype = insn # The define causes problem so you have to add on before that
           db_id = self_get_instruction_id(str(addr))
           if db_id is None:
-            cur_execute(sql, (str(addr), mnem, disasm, cmt1, cmt2, name, mtype))
+            cur_execute(sql, (str(addr), mnem, disasm, cmt1, cmt2, name, instr_cnt, mtype))
             db_id = cur.lastrowid
           instructions_ids[addr] = db_id
 
@@ -1510,6 +1523,7 @@ class CBinDiff:
     self.export_til()
 
   def export(self):
+    ChangeConfig("SHOW_AUTOCOMMENTS=NO"); #This turns off auto comments some still stay though
     try:
       show_wait_box("Exporting database")
       self.do_export()
@@ -1580,6 +1594,12 @@ class CBinDiff:
     cur.close()
     Wait()
 
+  # Function designed to reduce any address information in assembly so that we can merge and diff cleanly
+  def reduceAddress(self,asm1):
+   asm1_re = re.sub('(off_|stru_|flt_|sub_|word_|byte_|dword_|unk_|loc_|0x)([0-9A-Fa-f]{6})','loc' ,asm1)
+   return asm1_re
+
+
   def import_one(self, item):
     ret = askyn_c(1, "AUTOHIDE DATABASE\nDo you want to import all the type libraries, structs and enumerations?")
 
@@ -1634,12 +1654,28 @@ class CBinDiff:
       row1 = rows[0]
       row2 = rows[1]
 
-      html_diff = HtmlDiff()
+      
       asm1 = self.prettify_asm(row1[1])
       asm2 = self.prettify_asm(row2[1])
-      buf1 = "%s proc near\n%s\n%s endp" % (row1[2], asm1, row1[2])
-      buf2 = "%s proc near\n%s\n%s endp" % (row2[2], asm2, row2[2])
-      src = html_diff.make_file(buf1.split("\n"), buf2.split("\n"))
+      
+      asm1_re = self.reduceAddress(asm1)
+      asm2_re = self.reduceAddress(asm2)
+      
+      buf1 = "%s proc near\n%s\n%s endp" % (row1[2], asm1_re, row1[2])
+      buf2 = "%s proc near\n%s\n%s endp" % (row2[2], asm2_re, row2[2])
+      
+      src = " "
+      if doGoogleDiff == 1:
+        dmp = dmp_module.diff_match_patch()
+        dmp.Diff_EditCost = 0
+        diff = dmp.diff_main(buf1, buf2)
+        dmp.diff_cleanupEfficiency(diff)
+        #dmp.diff_cleanupSemantic(diff)
+        src = dmp.diff_prettyHtml(diff)
+        
+      else:
+        html_diff = HtmlDiff()      
+        src = html_diff.make_file(buf1.split("\n"), buf2.split("\n"))
       
       title = "Diff assembler %s - %s" % (row1[2], row2[2])
       cdiffer = CHtmlViewer()
@@ -1993,7 +2029,7 @@ class CBinDiff:
     cur = self.db_cursor()
     try:
       # Check first if we have any importable items
-      sql = """ select ins.address ea, ins.disasm dis, ins.comment1 cmt1, ins.comment2 cmt2, ins.name name, ins.type type
+      sql = """ select ins.address ea, ins.disasm dis, ins.comment1 cmt1, ins.comment2 cmt2, ins.name name, ins.type type, ins.instr_cnt instr_cnt
                   from diff.function_bblocks bb,
                        diff.functions f,
                        diff.bb_instructions bbi,
@@ -2010,10 +2046,10 @@ class CBinDiff:
       if len(import_rows) > 0:
         import_syms = {}
         for row in import_rows:
-          import_syms[row["dis"]] = [row["ea"], row["cmt1"], row["cmt2"], row["name"], row["type"]]
+          import_syms[row["instr_cnt"]] = [row["ea"], row["cmt1"], row["cmt2"], row["name"], row["type"]]
 
         # Check in the current database
-        sql = """ select ins.address ea, ins.disasm dis, ins.comment1 cmt1, ins.comment2 cmt2, ins.name name, ins.type type
+        sql = """ select ins.address ea, ins.disasm dis, ins.comment1 cmt1, ins.comment2 cmt2, ins.name name, ins.type type, ins.instr_cnt instr_cnt
                     from function_bblocks bb,
                          functions f,
                          bb_instructions bbi,
@@ -2021,14 +2057,15 @@ class CBinDiff:
                    where f.id = bb.function_id
                      and bbi.basic_block_id = bb.basic_block_id
                      and ins.id = bbi.instruction_id
-                     and f.address = ?"""
+                     and f.address = ?
+                     order by ins.instr_cnt"""
         cur.execute(sql, (ea1,))
         match_rows = cur.fetchall()
         if len(match_rows) > 0:
           matched_syms = {}
           for row in match_rows:
-            matched_syms[row["dis"]] = [row["ea"], row["cmt1"], row["cmt2"], row["name"], row["type"]]
-
+            matched_syms[row["instr_cnt"]] = [row["ea"], row["cmt1"], row["cmt2"], row["name"], row["type"]]
+          
           # We have 'something' to import, let's diff the assembly...
           sql = """select *
                      from (
@@ -2047,23 +2084,97 @@ class CBinDiff:
             lines1 = diff_rows[0][0]
             lines2 = diff_rows[1][0]
 
-            matches = {}
-            to_line = None
-            change_line = None
-            diff_list = difflib.ndiff(lines1.splitlines(1), lines2.splitlines(1))
+#             matches = {}
+#             to_line = None
+#             change_line = None
+            
+            lines1 = self.reduceAddress(lines1)
+            lines2 = self.reduceAddress(lines2)
+                       
+            if doGoogleDiff != 1:         
+              diff_list = mod_difflib.ndiff(lines1.splitlines(1), lines2.splitlines(1)) #DJC
+            
+            else:
+                 # Run the google diff and format the output to match ndiff
+                 dmp = dmp_module.diff_match_patch()  
+   
+                 result = dmp.diff_linesToChars(lines1, lines2)
+                  
+                 diff = dmp.diff_main(result[0],result[1], None)
+                  
+                 dmp.diff_charsToLines(diff, result[2])
+                 
+                 
+                 diff_list = []
+                 diffcount = 0;
+                 while diffcount < len(diff):
+                  (op, data) = diff[diffcount] 
+                  diffcount = diffcount + 1
+                  
+                  
+                  
+                  data = data.strip('\r').strip("\r")
+              
+                  lines = data.split("\n")
+              
+                  if op == dmp.DIFF_INSERT:
+                    
+                    
+                    for line in lines:
+                      if(line != ''):
+                      
+                        diff_list.append("+ " + line)
+                      
+                  elif op == dmp.DIFF_DELETE:
+                    for line in lines:
+                      if(line != ''):
+                        diff_list.append("- " + line)
+              
+                  elif op == dmp.DIFF_EQUAL:
+                    for line in lines:
+                      if(line != ''):
+              
+                        diff_list.append("  " + line)
+              
+            
+            
+            
+            
+            current_instr_cnt = 0
+            import_instr_cnt = 0
+            
+            sub_count = 0
+            add_count = 0
+            previous_cmd = ' '
             for x in diff_list:
               if x[0] == '-':
-                change_line = x[1:].strip(" ").strip("\r").strip("\n")
+                previous_cmd = '-'
+                sub_count = sub_count + 1
+                current_instr_cnt = current_instr_cnt  + 1 # Increment the function index
+                
               elif x[0] == '+':
-                to_line = x[1:].strip(" ").strip("\r").strip("\n")
-              elif change_line is not None:
-                change_line = None
+                previous_cmd = '+' 
+                add_count = add_count + 1
+                import_instr_cnt = import_instr_cnt + 1  # Increment the function index
+                if sub_count != 0 and sub_count == add_count:
+                  # We have a multi-line replacement going on trigger the changes
+                  for i in range(0,sub_count) :
+                    if (import_instr_cnt-i) in import_syms:
+                      self.import_instruction(matched_syms[current_instr_cnt-i], import_syms[import_instr_cnt-i])
+              elif x[0] == '?':
+                if previous_cmd is '+'  and '^' in x:
+                  if import_instr_cnt in import_syms:
+                    self.import_instruction(matched_syms[current_instr_cnt], import_syms[import_instr_cnt])
+                  sub_count = 0
+                  add_count = 0 
+                previous_cmd = '?'
+              elif x[0] == ' ':
+                 current_instr_cnt = current_instr_cnt  + 1   # Increment the function index
+                 import_instr_cnt = import_instr_cnt + 1  # Increment the function index
+                 previous_cmd = ' '
+                 sub_count = 0
+                 add_count = 0   
 
-              if to_line is not None and change_line is not None:
-                matches[change_line] = to_line
-                if change_line in matched_syms and to_line in import_syms:
-                  self.import_instruction(matched_syms[change_line], import_syms[to_line])
-                change_line = to_line = None
     finally:
       cur.close()
 
