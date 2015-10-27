@@ -62,7 +62,7 @@ from jkutils.factor import (FACTORS_CACHE, difference, difference_ratio,
                             primesbelow as primes)
 
 #-----------------------------------------------------------------------
-VERSION_VALUE = "1.0.7"
+VERSION_VALUE = "1.0.8"
 COPYRIGHT_VALUE="Copyright(c) 2015 Joxean Koret"
 COMMENT_VALUE="Diaphora diffing plugin for IDA version %s" % VERSION_VALUE
 
@@ -1496,11 +1496,18 @@ class CBinDiff:
     t = time.time()
     for func in func_list:
       i += 1
-      if i % 100 == 0 or i == 1:
-        line = "Exported %d function(s) out of %d total.\nElapsed %d second(s), remaining ~%d second(s)"
+      if i % (total_funcs/100) == 0 or i == 1:
+        line = "Exported %d function(s) out of %d total.\nElapsed %d:%02d:%02d second(s), remaining time ~%d:%02d:%02d"
         elapsed = time.time() - t
         remaining = (elapsed / i) * (total_funcs - i)
-        replace_wait_box(line % (i, total_funcs, int(elapsed), int(remaining)))
+
+        m, s = divmod(remaining, 60)
+        h, m = divmod(m, 60)
+        m_elapsed, s_elapsed = divmod(elapsed, 60)
+        h_elapsed, m_elapsed = divmod(m_elapsed, 60)
+
+        replace_wait_box(line % (i, total_funcs, h_elapsed, m_elapsed, s_elapsed, h, m, s))
+
       props = self.read_function(func)
       if props == False:
         continue
@@ -1514,7 +1521,7 @@ class CBinDiff:
       self.save_function(props)
 
       # Try to fix bug #30
-      if i % 1000 == 0:
+      if i % (total_funcs/10) == 0:
         self.db.commit()
 
     md5sum = GetInputFileMD5()
@@ -2718,7 +2725,7 @@ class CBinDiff:
 
       r = self.check_ratio(ast1, ast2, pseudo1, pseudo2, asm1, asm2)
 
-      if r == 1 and best != self.best_chooser:
+      if r == 1:
         self.best_chooser.add_item(CChooser.Item(ea, name1, ea2, name2, desc, r))
         self.matched1.add(name1)
         self.matched2.add(name2)
@@ -2798,7 +2805,11 @@ class CBinDiff:
       ratio = (commons * 1.) / total
       if ratio >= 0.5:
         ea2 = row[5]
-        choose.add_item(CChooser.Item(ea, name1, ea2, name2, "Nodes, edges, complexity and mnemonics with small differences", ratio))
+        item = CChooser.Item(ea, name1, ea2, name2, "Nodes, edges, complexity and mnemonics with small differences", ratio)
+        if ratio == 1.0:
+          self.best_chooser.add_item(item)
+        else:
+          choose.add_item(item)
         self.matched1.add(name1)
         self.matched2.add(name2)
 
@@ -2813,8 +2824,8 @@ class CBinDiff:
                     f.pseudocode_primes, d.pseudocode_primes
                from functions f,
                     diff.functions d
-              where (d.mangled_function = f.mangled_function
-                  or d.name = f.name)"""
+              where d.mangled_function = f.mangled_function
+                 or d.name = f.name"""
     log_refresh("Finding with heuristic 'Same name'")
     cur.execute(sql)
     rows = cur.fetchall()
