@@ -54,7 +54,15 @@ from idc import *
 from idaapi import *
 from idautils import *
 
-from PySide import QtGui
+if IDA_SDK_VERSION < 690:
+  # In versions prior to IDA 6.9 PySide is used...
+  from PySide import QtGui
+  QtWidgets = QtGui
+  is_pyqt5 = False
+else:
+  # ...while in IDA 6.9, they switched to PyQt5
+  from PyQt5 import QtCore, QtGui, QtWidgets
+  is_pyqt5 = True
 
 from others.tarjan_sort import strongly_connected_components, robust_topological_sort
 from jkutils.kfuzzy import CKoretFuzzyHashing
@@ -138,7 +146,10 @@ def ast_ratio(ast1, ast2):
 #-----------------------------------------------------------------------
 class CHtmlViewer(PluginForm):
   def OnCreate(self, form):
-    self.parent = self.FormToPySideWidget(form)
+    if is_pyqt5:
+      self.parent = self.FormToPyQtWidget(form)
+    else:
+      self.parent = self.FormToPySideWidget(form)
     self.PopulateForm()
     
     self.browser = None
@@ -146,10 +157,10 @@ class CHtmlViewer(PluginForm):
     return 1
   
   def PopulateForm(self):
-    self.layout = QtGui.QVBoxLayout()
-    self.browser = QtGui.QTextBrowser()
+    self.layout = QtWidgets.QVBoxLayout()
+    self.browser = QtWidgets.QTextBrowser()
     # Commented for now
-    #self.browser.setLineWrapMode(QtGui.QTextEdit.NoWrap)
+    #self.browser.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
     self.browser.setHtml(self.text)
     self.browser.setReadOnly(True)
     self.browser.setFontWeight(12)
@@ -604,6 +615,7 @@ class CBinDiff:
     self.names = dict(Names())
     self.primes = primes(2048*2048)
     self.db_name = db_name
+    self.db = None
     self.open_db()
     self.matched1 = set()
     self.matched2 = set()
@@ -671,6 +683,7 @@ class CBinDiff:
       self.db_close()
 
   def open_db(self):
+    print "DATABASE NAME", self.db_name
     self.db = sqlite3.connect(self.db_name)
     self.db.text_factory = str
     self.db.row_factory = sqlite3.Row
@@ -733,6 +746,7 @@ class CBinDiff:
                 id integer primary key,
                 callgraph_primes text,
                 callgraph_all_primes text,
+                processor text,
                 md5sum text
               ) """
     cur.execute(sql)
@@ -1423,8 +1437,11 @@ class CBinDiff:
 
   def save_callgraph(self, primes, all_primes, md5sum):
     cur = self.db_cursor()
-    sql = "insert into main.program (callgraph_primes, callgraph_all_primes, md5sum) values (?, ?, ?)"
-    cur.execute(sql, (primes, all_primes, md5sum))
+    sql = "insert into main.program (callgraph_primes, callgraph_all_primes, processor, md5sum) values (?, ?, ?, ?)"
+    proc = idaapi.get_idp_name()
+    if BADADDR == 0xFFFFFFFFFFFFFFFF:
+      proc += "64"
+    cur.execute(sql, (primes, all_primes, proc, md5sum))
     cur.close()
 
   def GetLocalType(self, ordinal, flags):
@@ -3748,6 +3765,13 @@ class BinDiffOptions:
     self.func_summaries_only = kwargs.get('func_summaries_only', total_functions > 100000)
 
 #-----------------------------------------------------------------------
+def is_ida_file(filename):
+  filename = filename.lower()
+  return filename.endswith(".idb") or filename.endswith(".i64") or \
+         filename.endswith(".til") or filename.endswith(".id0") or \
+         filename.endswith(".id1") or filename.endswith(".nam")
+
+#-----------------------------------------------------------------------
 def _diff_or_export(use_ui, **options):
   global g_bindiff
 
@@ -3774,11 +3798,8 @@ def _diff_or_export(use_ui, **options):
   elif opts.file_out == "" or len(opts.file_out) < 5:
     Warning("No output database selected or invalid filename. Please select a database file.")
     return
-  elif opts.file_out[len(opts.file_out)-4:].lower() in [".idb", ".i64"] or opts.file_in[len(opts.file_in)-4:].lower() in [".idb", ".i64"]:
-    Warning("One of the selected databases is an IDA database (IDB or I64), not a SQLite database!")
-    return
-  elif opts.file_out.lower().endswith(".til") or opts.file_in.lower().endswith(".id0") or opts.file_in.lower().endswith(".id1") or opts.file_in.lower().endswith(".nam"):
-    Warning("One of the selected databases is an IDA temporary file, not a SQLite database!")
+  elif is_ida_file(opts.file_in) or is_ida_file(opts.file_out):
+    Warning("One of the selected databases is an IDA file. Please select only database files")
     return
 
   export = True
@@ -3857,8 +3878,9 @@ if __name__ == "__main__":
     use_decompiler = os.getenv("DIAPHORA_USE_DECOMPILER")
     if use_decompiler is None:
       use_decompiler = False
-    bd = CBinDiff(file_out)
-    bd.use_decompiler_always = use_decompiler
+
+    idaapi.autoWait()
+
     if os.path.exists(file_out):
       if g_bindiff is not None:
         g_bindiff = None
@@ -3866,7 +3888,10 @@ if __name__ == "__main__":
       remove_file(file_out)
       log("Database %s removed" % repr(file_out))
 
+    bd = CBinDiff(file_out)
+    bd.use_decompiler_always = use_decompiler
     bd.export()
+
+    idaapi.qexit(0)
   else:
     diff_or_export_ui()
-
