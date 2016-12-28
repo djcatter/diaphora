@@ -90,6 +90,11 @@ def log_refresh(msg, show=False):
   log(msg)
 
 #-----------------------------------------------------------------------
+def decompiler_available():
+  if not init_hexrays_plugin() and not (load_plugin("hexrays") and init_hexrays_plugin()):
+    return False
+  return True
+#-----------------------------------------------------------------------
 # TODO: FIX hack
 diaphora.log = log
 diaphora.log_refresh = log_refresh
@@ -340,8 +345,7 @@ class CBinDiffExporterSetup(Form):
       self.iFileSave.value = opts.file_out
     if opts.file_in is not None:
       self.iFileOpen.value = opts.file_in
-
-    self.rUseDecompiler.checked = opts.use_decompiler
+    self.rUseDecompiler.checked = decompiler_available() == True
     self.rExcludeLibraryThunk.checked = opts.exclude_library_thunk
     self.rUnreliable.checked = opts.unreliable
     self.rSlowHeuristics.checked = opts.slow
@@ -1164,7 +1168,7 @@ class CIDABinDiff(diaphora.CBinDiff):
       traceback.print_exc()
 
   def decompile_and_get(self, ea):
-    if not init_hexrays_plugin() and not (load_plugin("hexrays") and init_hexrays_plugin()):
+    if decompiler_available() is False:
       return False
 
     f = get_func(ea)
