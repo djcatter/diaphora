@@ -149,11 +149,11 @@ class CChooser():
 
   def add_item(self, item):
     if self.title.startswith("Unmatched in"):
-      self.items.append(["%05lu" % self.n, "%08x" % int(item.ea), item.vfname])
+      self.items.append(["%08lu" % self.n, "%08x" % int(item.ea), item.vfname])
     else:
-      self.items.append(["%05lu" % self.n, "%08x" % int(item.ea), item.vfname,
+      self.items.append(["%08lu" % self.n, "%08x" % int(item.ea), item.vfname,
                          "%08x" % int(item.ea2), item.vfname2, "%.3f" % item.ratio,
-                         "%d" % item.bb1, "%d" % item.bb2, item.description])
+                         "%08d" % item.bb1, "%08d" % item.bb2, item.description])
     self.n += 1
 
   def get_color(self):
