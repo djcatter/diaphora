@@ -677,7 +677,7 @@ class CIDABinDiff(diaphora.CBinDiff):
   def reduceAddress(self,asm1):
    if(procName == 'metapc'):
      asm1_re = re.sub('(off_|stru_|flt_|sub_|word_|byte_|dword_|unk_|loc_|0x)([0-9A-Fa-f]{6})','loc' ,asm1)
-   elif(procName == 'TRICORE'):
+   elif(procName == 'TRICORE' or procName =='PPC'):
 	   asm1_re = re.sub('(off_|stru_|flt_|sub_|word_|byte_|dword_|unk_|loc_|0x)([0-9A-Fa-f]{8})',lambda mo: '0x' if mo.end()-mo.start() == 10 else 'loc' ,asm1)
 	   asm1_re = re.sub('(0x)([0-9A-Fa-f]{4})','0x',asm1_re)
    else:
@@ -959,9 +959,8 @@ class CIDABinDiff(diaphora.CBinDiff):
                      and bbi.basic_block_id = bb.basic_block_id
                      and ins.id = bbi.instruction_id
                      and f.address = ?
-                     order by ins.instr_cnt"""
-        cur.execute(sql, (ea1,))
-                     and f.address = ?"""
+                     order by ins.instr_cnt
+                     """
         cur.execute(sql, (str(ea1),))
         match_rows = cur.fetchall()
         if len(match_rows) > 0:
@@ -1450,6 +1449,89 @@ or selecting Edit -> Plugins -> Diaphora - Show results""")
               
           return curr_bytes
 
+  def doPPCMask(self,x):
+          decoded_size = idaapi.decode_insn(x)
+          
+          opcode = idc.Byte(x)
+          
+          # Since we do not have switch statements the best way to do this is list arrays.
+          # We do not want to use a traditional mask for the Tricore since it can embeded address 
+          # information, so for each style of opcodes we mask out what does not change with addresses.
+          # This is pulled for a version of Essence.
+          mask_0xFF000000 = [  
+             PPC_addi,
+
+             PPC_subi,
+             PPC_lis,
+
+             PPC_lbz,        # Load Byte and Zero
+             PPC_lbzu,       # Load Byte and Zero with Update
+             PPC_ld,         # Load Double Word
+             PPC_ldu,        # Load Double Word with Update
+             PPC_ldx,        # Load Double Word Indexed
+             PPC_lfd,        # Load Floating-Point Double-Precision
+             PPC_lfdu,       # Load Floating-Point Double-Precision with Update
+             PPC_lfs,        # Load Floating-Point Single-Precision
+             PPC_lfsu,       # Load Floating-Point Single-Precision with Update
+             PPC_lha,        # Load Half Word Algebraic
+             PPC_lhau,       # Load Half Word Algebraic with Update
+             PPC_lhz,        # Load Half Word and Zero
+             PPC_lhzu,       # Load Half Word and Zero with Update
+             PPC_lmw,        # Load Multiple Word
+             PPC_lswi,       # Load String Word Immediate
+             PPC_lwa,        # Load Word Algebraic
+             PPC_lwz,        # Load Word and Zero
+             PPC_lwzu,       # Load Word and Zero with Update
+             PPC_stb,        # Store Byte
+             PPC_stbu,       # Store Byte with Update
+             PPC_std,        # Store Double Word
+             PPC_stdu,       # Store Double Word with Update
+             PPC_stfd,       # Store Floating-Point Double-Precision
+             PPC_stfdu,      # Store Floating-Point Double-Precision wiht Update
+             PPC_stfs,       # Store Floating-Point Single-Precision
+             PPC_stfsu,      # Store Floating-Point Single-Precision with Update
+             PPC_sth,        # Store Half Word
+             PPC_sthu,       # Store Half Word with Update
+             PPC_stmw,       # Store Multiple Word
+             PPC_stswi,      # Store String Word Immediate
+             PPC_stw,        # Store Word
+             PPC_stwu       # Store Word with Update
+            ]
+
+          mask_0xF8000000 = [ 
+             PPC_b
+#                 AA_LK = get_byte(addr+3) & 0x3;
+# 
+#                 if(AA_LK == 3 || AA_LK == 1)
+
+            ]
+          mask_0xFC000000 = [ 
+
+             PPC_clrrwi,
+             PPC_clrlwi,
+             PPC_rlwimi,
+             PPC_rlwinm,
+            ]          
+          #Fall through switch statement to generate our strings
+          if(opcode in mask_0xFF000000):
+            curr_bytes = (chr(opcode)) + '\x00' + '\x00' +'\x00'
+            
+          elif(opcode in mask_0xF8000000):
+            curr_bytes = (chr(opcode & 0xF8)) + '\x00' + '\x00' +'\x00'       
+
+          elif(opcode in mask_0xFC000000):
+            curr_bytes = (chr(opcode & 0xFC)) + '\x00' + '\x00' +'\x00'       
+ 
+          
+          else:
+            curr_bytes = (chr(opcode)) + '\x00' + '\x00' +'\x00'
+          
+          #Error checking
+          if curr_bytes is None or len(curr_bytes) != decoded_size:
+              log("Failed to read %d bytes at [%08x]" % (decoded_size, x))
+              
+          return curr_bytes
+
 
   def save_namesinfo(self,ea):
         # Get name , comment, and repeatable comment
@@ -1595,7 +1677,9 @@ or selecting Edit -> Plugins -> Diaphora - Show results""")
 
         if(procName == 'TRICORE'):
           curr_bytes = self.doTricoreMask(x)
-              
+          
+        elif(procName == 'PPC'):
+          curr_bytes = self.doPPCMask(x)              
 
         else:
           #Original X86 masking code
@@ -1629,7 +1713,7 @@ or selecting Edit -> Plugins -> Diaphora - Show results""")
         bytes_hash.append(curr_bytes)
         bytes_sum += sum(map(ord, curr_bytes))
 
-        function_hash.append(GetManyBytes(x, ItemSize(x), False)))
+        function_hash.append(GetManyBytes(x, ItemSize(x)))
         # add to our outdegree count
         outdegree += len(list(CodeRefsFrom(x, 0)))
         # append to our mnemonics list

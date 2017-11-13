@@ -558,14 +558,9 @@ class CBinDiff:
                                     pseudocode_hash3, strongly_connected, loops, rva,
                                     tarjan_topological_sort, strongly_connected_spp,
                                     clean_assembly, clean_pseudo, mnemonics_spp, switches,
-<<<<<<< HEAD
-                                    function_hash, bytes_sum)
-                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-=======
                                     function_hash, bytes_sum, md_index, constants,
                                     constants_count, segment_rva)
-                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
->>>>>>> cba83bccc7a6799d756323e411003a31f6be75b2
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
