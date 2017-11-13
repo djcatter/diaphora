@@ -237,7 +237,7 @@ class CBinDiff:
     if self.db is not None:
       try:
         if self.last_diff_db is not None:
-          with self.db.cursor():
+          with self.db.cursor() as cur:
             cur.execute('detach "%s"' % self.last_diff_db)
       except:
         pass
@@ -1182,7 +1182,7 @@ class CBinDiff:
         partial.add_item(CChooser.Item(ea, name1, ea2, name2, desc, r, bb1, bb2))
         self.matched1.add(name1)
         self.matched2.add(name2)
-      elif r < 5 and unreliable is not None:
+      elif r < 0.5 and unreliable is not None:
         unreliable.add_item(CChooser.Item(ea, name1, ea2, name2, desc, r, bb1, bb2))
         self.matched1.add(name1)
         self.matched2.add(name2)
@@ -2356,6 +2356,7 @@ class CBinDiff:
       return False
 
     try:
+      t0 = time.time()
       log_refresh("Performing diffing...", True)
       
       self.do_continue = True
@@ -2388,7 +2389,7 @@ class CBinDiff:
         log_refresh("Finding unmatched functions")
         self.find_unmatched()
 
-        log("Done")
+        log("Done. Took {} seconds".format(time.time() - t0))
     finally:
       cur.close()
     return True

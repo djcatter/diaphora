@@ -146,6 +146,22 @@ def diaphora_decode(ea):
     raise Exception("Unsupported IDA kernel version!")
 
 #-----------------------------------------------------------------------
+# Compatibility between IDA 6.X and 7.X
+#
+KERNEL_VERSION = get_kernel_version()
+def diaphora_decode(ea):
+  global KERNEL_VERSION
+  if KERNEL_VERSION.startswith("7."):
+    ins = idaapi.insn_t()
+    decoded_size = idaapi.decode_insn(ins, ea)
+    return decoded_size, ins
+  elif KERNEL_VERSION.startswith("6."):
+    decoded_size = idaapi.decode_insn(ea)
+    return decoded_size, idaapi.cmd
+  else:
+    raise Exception("Unsupported IDA kernel version!")
+
+#-----------------------------------------------------------------------
 class CHtmlViewer(PluginForm):
   def OnCreate(self, form):
     if is_pyqt5:
@@ -1223,7 +1239,10 @@ class CIDABinDiff(diaphora.CBinDiff):
       traceback.print_exc()
 
   def decompile_and_get(self, ea):
-    if not init_hexrays_plugin() and not (load_plugin("hexrays") and init_hexrays_plugin()):
+    decompiler_plugin = os.getenv("DIAPHORA_DECOMPILER_PLUGIN")
+    if decompiler_plugin is None:
+      decompiler_plugin = "hexrays"
+    if not init_hexrays_plugin() and not (load_plugin(decompiler_plugin) and init_hexrays_plugin()):
       return False
 
     f = get_func(ea)
@@ -1660,7 +1679,7 @@ or selecting Edit -> Plugins -> Diaphora - Show results""")
 
         #Add instructions to the mnemonics primes
         if mnem in cpu_ins_list:
-          mnemonics_spp += self.primes[cpu_ins_list.index(mnem)]
+          mnemonics_spp *= self.primes[cpu_ins_list.index(mnem)]
 
         # Create assembly list
         if mnem in cpu_ins_list:
@@ -2136,7 +2155,7 @@ def _diff_or_export(use_ui, **options):
         g_bindiff = None
       remove_file(opts.file_out)
       log("Database %s removed" % repr(opts.file_out))
-
+  t0 = time.time()
   try:
     bd = CIDABinDiff(opts.file_out)
     bd.use_decompiler_always = opts.use_decompiler
@@ -2164,7 +2183,7 @@ def _diff_or_export(use_ui, **options):
         profiler.print_stats(sort="time")
       else:
         bd.export()
-      log("Database exported")
+      log("Database exported. Took {} seconds".format(time.time() - t0))
 
     if opts.file_in != "":
       if os.getenv("DIAPHORA_PROFILE") is not None:
